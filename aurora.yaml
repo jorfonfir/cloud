@@ -1,0 +1,103 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Aurora MySQL cluster with one writer and one reader in different AZs
+
+Parameters:
+  VPCId:
+    Type: AWS::EC2::VPC::Id
+  PrivateSubnet1:
+    Type: AWS::EC2::Subnet::Id
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet::Id
+  DBUsername:
+    Type: String
+    Default: wordpressuser
+  DBPassword:
+    Type: String
+    NoEcho: true
+  DBName:
+    Type: String
+    Default: wordpress
+  InstanceClass:
+    Type: String
+    Default: db.t3.medium
+
+Resources:
+
+  # Security Group for Aurora (allow only internal access)
+  AuroraSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow MySQL traffic within VPC
+      VpcId: !Ref VPCId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 3306
+          ToPort: 3306
+          CidrIp: 10.0.0.0/16
+      Tags:
+        - Key: Name
+          Value: AuroraSG
+
+  # DB Subnet Group
+  DBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: Aurora private subnets
+      SubnetIds:
+        - !Ref PrivateSubnet1
+        - !Ref PrivateSubnet2
+      DBSubnetGroupName: aurora-subnet-group
+
+  # Aurora Cluster
+  AuroraCluster:
+    Type: AWS::RDS::DBCluster
+    Properties:
+      Engine: aurora-mysql
+      EngineMode: provisioned
+      MasterUsername: !Ref DBUsername
+      MasterUserPassword: !Ref DBPassword
+      DatabaseName: !Ref DBName
+      DBSubnetGroupName: !Ref DBSubnetGroup
+      VpcSecurityGroupIds:
+        - !Ref AuroraSecurityGroup
+      BackupRetentionPeriod: 1
+      PreferredBackupWindow: 02:00-03:00
+      PreferredMaintenanceWindow: sun:04:00-sun:05:00
+      EngineVersion: "8.0.mysql_aurora.3.05.2"  # You can update to latest
+      StorageEncrypted: true
+
+  # Writer instance (primary)
+  AuroraWriterInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref AuroraCluster
+      DBInstanceClass: !Ref InstanceClass
+      Engine: aurora-mysql
+      AvailabilityZone: eu-south-2a
+      PubliclyAccessible: false
+
+  # Reader instance (replica)
+  AuroraReaderInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBClusterIdentifier: !Ref AuroraCluster
+      DBInstanceClass: !Ref InstanceClass
+      Engine: aurora-mysql
+      AvailabilityZone: eu-south-2b
+      PubliclyAccessible: false
+
+Outputs:
+  AuroraClusterEndpoint:
+    Value: !GetAtt AuroraCluster.Endpoint.Address
+    Export:
+      Name: AuroraClusterEndpoint
+
+  AuroraReaderEndpoint:
+    Value: !GetAtt AuroraCluster.ReadEndpoint.Address
+    Export:
+      Name: AuroraReaderEndpoint
+
+  AuroraSecurityGroupId:
+    Value: !Ref AuroraSecurityGroup
+    Export:
+      Name: AuroraSGId
